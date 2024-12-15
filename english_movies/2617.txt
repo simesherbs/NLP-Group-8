@@ -1,0 +1,1 @@
+make avatar show interest part work set 
