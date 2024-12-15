@@ -15,6 +15,8 @@ import sklearn.preprocessing as preprocessing
 from sklearn.multiclass import OneVsRestClassifier
 import sys
 
+a =3
+
 corpus = sys.argv[1]
 weights = [.3,.3,.3]
 
