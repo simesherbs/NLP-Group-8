@@ -8,7 +8,7 @@ import sys
 from CValue import get_cval
 
 
-def calc_CS(corpus_file, weights):
+def calc_CS(corpus_file):
     
     df = pd.read_csv(corpus_file)
 
@@ -41,7 +41,8 @@ def calc_CS(corpus_file, weights):
     CS_dict = {}
 
     cval_dict = get_cval(corpus_file)
- 
+    
+
     for genre in Genre_Objects.keys():
         atfidf_dict = get_TFIDF(Genre_Objects[genre], vocab=vocab, genre=genre)
         chi2_dict = get_chi2(Genre_Objects[genre], vocab, df, genre)
@@ -51,9 +52,9 @@ def calc_CS(corpus_file, weights):
 
             if term in cval_dict[genre].keys():
                 
-                CS_dict[genre][term] = (atfidf_dict[term] * weights[0]) + (chi2_dict[term] * weights[1]) + (cval_dict[genre][term] * weights[2])
+                CS_dict[genre][term] = (atfidf_dict[term], chi2_dict[term], (cval_dict[genre][term]))
             else:
-                CS_dict[genre][term] = (atfidf_dict[term] * weights[0]) + (chi2_dict[term] * weights[1])
+                CS_dict[genre][term] = (atfidf_dict[term], chi2_dict[term], 0.0)
     
     
     return CS_dict
