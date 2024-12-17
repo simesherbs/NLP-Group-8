@@ -1,124 +1,91 @@
-import pandas as pd
+from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
+from sklearn.model_selection import train_test_split
+from sklearn.multiclass import OneVsRestClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.metrics import classification_report
 from sklearn.preprocessing import MultiLabelBinarizer
-from transformers import BertTokenizer
-import torch
-import torch.nn as nn
-from transformers import BertModel
-import numpy as np
-from torch.optim import AdamW
+from sklearn.svm import SVC
+
+import pandas as pd
+from bigramstrigrams import generate_ngram_file
 import time
-df = pd.read_csv('english_movies.csv').head(100)
-
-
-
-# Initialize the BERT tokenizer
-
-start_tokenization = time.time()
-tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
-
-# Convert genres to one-hot encoded labels
-mlb = MultiLabelBinarizer()
-y = mlb.fit_transform(df["genres"])
-
-
-# Tokenize the document text (use BERT tokenizer)
-max_len = 128  # You can adjust this based on your documents
-
-def tokenize_data(text):
-    encoding = tokenizer(
-        text,
-        padding="max_length",  # Padding to ensure uniform length
-        truncation=True,  # Truncate if the text exceeds max length
-        max_length=max_len,  # Ensure all tokens are the same length
-        return_tensors="pt"  # Return as PyTorch tensors
+start = time.time()
+def split_corpus(corpusfile, seed):
+    parsed  = generate_ngram_file(corpusfile)
+    corpus_df = pd.read_csv(parsed)
+    X = corpus_df['Ngrams']
+    Y = corpus_df['Genres']
+    X_train, X_test, y_train, y_test = train_test_split(X, Y, test_size=0.15, random_state=seed)
+ 
+    training = pd.DataFrame({
+        'Ngrams': X_train,
+        'Genres': y_train
+    })
+    training["Genres"] = training["Genres"].apply(
+        lambda x: x.split(", ")
     )
-    return encoding["input_ids"].squeeze(0), encoding["attention_mask"].squeeze(0)
-
-# Apply tokenization to all documents
-input_ids, attention_masks = zip(*df["overview"].astype(str).apply(tokenize_data))
-
-# Convert tokenized text to tensors
-input_ids = torch.stack(input_ids)
-attention_masks = torch.stack(attention_masks)
-
-end_tokenization = time.time()
-print(f"Tokenization runtime: {end_tokenization - start_tokenization:.2f} seconds")
-
-start_model_definition = time.time()
-class BERTGenreClassifier(nn.Module):
-    def __init__(self, n_labels):
-        super(BERTGenreClassifier, self).__init__()
-        self.bert = BertModel.from_pretrained("bert-base-uncased")
-        self.dropout = nn.Dropout(0.3)
-        self.out = nn.Linear(self.bert.config.hidden_size, n_labels)
-
-    def forward(self, input_ids, attention_mask):
-        # Forward pass through BERT
-        outputs = self.bert(input_ids=input_ids, attention_mask=attention_mask)
-        pooled_output = outputs.pooler_output  # Get the pooled output (representation of the [CLS] token)
-        pooled_output = self.dropout(pooled_output)  # Apply dropout
-        return self.out(pooled_output)  # Final output layer
-
-
-from torch.utils.data import DataLoader, TensorDataset
-from sklearn.metrics import precision_recall_fscore_support
-
-# Create a DataLoader to handle batching
-train_dataset = TensorDataset(input_ids, attention_masks, torch.tensor(y, dtype=torch.float32))
-train_dataloader = DataLoader(train_dataset, batch_size=8, shuffle=True)
-
-# Initialize model, loss function, and optimizer
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = BERTGenreClassifier(n_labels=y.shape[1]).to(device)
-criterion = nn.BCEWithLogitsLoss()
-optimizer = AdamW(model.parameters(), lr=2e-5)
-
-end_model_definition = time.time()
-print(f"Model Definition runtime: {end_model_definition - start_model_definition:.2f} seconds")
-# Training loop
-
-start_training = time.time()
-def train_model(model, dataloader, optimizer, criterion, device, epochs=3):
-    model.train()
-    for epoch in range(epochs):
-        total_loss = 0
-        for batch in dataloader:
-            input_ids, attention_mask, labels = [x.to(device) for x in batch]
-            optimizer.zero_grad()
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
-            total_loss += loss.item()
-        print(f"Epoch {epoch+1}, Loss: {total_loss/len(dataloader)}")
-
-# Train the model
-train_model(model, train_dataloader, optimizer, criterion, device)
-end_training = time.time()
-print(f"Training runtime: {end_training - start_training:.2f} seconds")
-start_eval = time.time()
-def evaluate_model(model, dataloader, device):
-    model.eval()
-    y_true = []
-    y_pred = []
-
-    with torch.no_grad():
-        for batch in dataloader:
-            input_ids, attention_mask, labels = [x.to(device) for x in batch]
-            outputs = model(input_ids=input_ids, attention_mask=attention_mask)
-            predictions = torch.sigmoid(outputs) > 0.5  # Convert logits to binary predictions
-            y_true.extend(labels.cpu().numpy())
-            y_pred.extend(predictions.cpu().numpy())
-
-    y_true = np.array(y_true)
-    y_pred = np.array(y_pred)
-
-    precision, recall, f1, _ = precision_recall_fscore_support(
-        y_true, y_pred, average="micro"
+    train = "train.csv"
+    training.to_csv(train)
+    testing = pd.DataFrame({
+        'Ngrams': X_test,
+        'Genres': y_test
+    })
+    testing["Genres"] = testing["Genres"].apply(
+        lambda x: x.split(", ")
     )
-    print(f"Precision: {precision:.4f}, Recall: {recall:.4f}, F1: {f1:.4f}")
+    test = "test.csv"
+    testing.to_csv(test)
+    corpus_df["Genres"] = corpus_df["Genres"].apply(
+        lambda x: x.split(", ")
+    )
+    unique_genres = set(genre for genre_list in corpus_df['Genres'] for genre in genre_list)
+    genres_arr = sorted(unique_genres)
+    return training, testing, genres_arr
 
-# Evaluate the model
-evaluate_model(model, train_dataloader, device)
-end_eval=time.time()
-print(f"Evaluation runtime: {end_eval - start_eval:.2f} seconds")
+
+
+seed=42
+ # Rows = documents, Columns = num_bins
+train_df, test_df, classes = split_corpus('english_movies.csv', seed)
+
+
+
+
+
+
+
+vocabulary = []
+
+for id, row in train_df.iterrows():
+
+    temp = row['Ngrams'].split(', ')
+    vocabulary += temp[0:len(temp)-1]
+
+
+
+def tokenizer(doc):
+    return str(doc).split(', ')
+vocabulary = set(vocabulary)
+# Convert multi-label genres to binary arrays
+mlb = MultiLabelBinarizer(classes=classes)
+vectorizer = TfidfVectorizer(vocabulary=vocabulary, token_pattern=None, tokenizer=tokenizer)
+X_train = vectorizer.fit_transform(train_df['Ngrams'])
+X_test = vectorizer.fit_transform(test_df['Ngrams'])
+y_train = mlb.fit_transform(train_df['Genres'])
+y_test = mlb.fit_transform(test_df['Genres'])
+
+# Use Logistic Regression with a OneVsRest strategy for multi-label classification
+classifier = OneVsRestClassifier(SVC())
+classifier.fit(X_train, y_train)
+
+
+# Predict on the test set
+y_pred = classifier.predict(X_test)
+end = time.time()
+# Print classification report
+
+print(f"{end-start:.2} seconds") 
+print(classification_report(y_test, y_pred, target_names=mlb.classes_))
+
+
+
